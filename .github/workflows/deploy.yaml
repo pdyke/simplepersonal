@@ -25,5 +25,5 @@ jobs:
             IMAGE_NAME: simplepersonal101
             VERSION: latest
          run: |
-             docker build -t ${ IMAGE_NAME }:${ VERSION }
+             docker build -t ${ IMAGE_NAME }:${ VERSION } .
 
