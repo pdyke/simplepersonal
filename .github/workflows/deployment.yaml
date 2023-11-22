@@ -1,0 +1,19 @@
+name: "Continuous Deploy"
+on:
+        workflow_run:
+            workflows: ["Integration"]
+            types:
+                - completed
+
+jobs:
+    pull_code:
+        runs-on: self-hosted
+        steps:
+            - name: "Remove Container"
+              run: "sudo docker rm -f webdev || true"
+            
+            - name: "Get the code from Docker Hub"
+              run: "sudo docker pull epauldike/simplepersonal101:latest"
+
+            - name: "Run the image as a container"
+              run: "sudo docker run -d -p 80:80 --name webdev epauldike/simplepersonal101:latest"
