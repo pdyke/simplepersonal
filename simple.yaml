@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
       - name: simplepersonal
-        image: epauldike/simplepersonal:latest
+        image: epauldike/simplepersonal101:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80
