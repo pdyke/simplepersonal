@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simplepersonal
+spec:
+  selector:
+    matchLabels:
+      app: simplepersonal
+  template:
+    metadata:
+      labels:
+        app: simplepersonal
+    spec:
+      containers:
+      - name: simplepersonal
+        image: epauldike/simplepersonal:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simplepersonal
+spec:
+  selector:
+    app: simplepersonal
+  ports:
+  - port: 80
+    targetPort: 80
+  type: LoadBalancer
+

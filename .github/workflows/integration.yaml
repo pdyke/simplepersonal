@@ -14,62 +14,75 @@ jobs:
        - name: check out the repository
          uses: actions/checkout@v4
 
-      #  - name: Post to a Slack channel
-      #    id: slack
-      #    uses: slackapi/slack-github-action@v1.24.0
-      #    with:
-      #       # Slack channel id, channel name, or user id to post message.
-      #       # See also: https://api.slack.com/methods/chat.postMessage#channels
-      #       # You can pass in multiple channels to post to by providing a comma-delimited list of channel IDs.
-      #       channel-id: 'C067NMNM5HB'
-      #       # For posting a simple plain text message
-      #       slack-message: "GitHub build result: ${{ job.status }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-      #    env:
-      #       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-       
-      #  - name: Make HTTP request
-      #    uses: fjogeleit/http-request-action@
-      #    id: "make_request"
-      #    with: 
-      #        url: 'http://api.exchangeratesapi.io/v1/latest?access_key=${{ secrets.API_KEY }}&symbols = USD,AUD,CAD,PLN,MXN'
-      #        method: GET
-      #        customHeaders: '{"content-type": "application/json"}'
-
-       - name: Show Request Response
-         run: |
-            echo ${{ steps.make_request.response.outputs.response }}
-            echo ${{ steps.make_request.outputs.headers }}
-
-       - name: Send mail
-         uses: dawidd6/action-send-mail@v3
+       - name: Configure AWS Credentials
+         uses: aws-actions/configure-aws-credentials@v4
          with:
-            # Specify connection via URL (replaces server_address, server_port, secure,
-            # username and password)
-            #
-            # Format:
-            #
-            #  * smtp://user:password@server:port
-            #  * smtp+starttls://user:password@server:port
-            # Required mail server address if not connection_url:
-            server_address: smtp.gmail.com
-            # Server port, default 25:
-            server_port: 465
-            # Optional whether this connection use TLS (default is true if server_port is 465)
-            secure: true
-            # Optional (recommended) mail server username:
-            username: ${{secrets.MAIL_USERNAME}}
-            # Optional (recommended) mail server password:
-            password: ${{secrets.MAIL_PASSWORD}}
-            # Required mail subject:
-            subject: Github Actions job result
-            # Required recipients' addresses:
-            to: ${{secrets.MAIL_USERNAME}}
-            # Required sender full name (address can be skipped):
-            from: ${{secrets.MAIL_USERNAME}} # <user@example.com>
-            # Optional plain body:
-            body: Build job of ${{github.repository}} completed successfully!
-            # Optional HTML body read from file:
-            # html_body: file://README.html
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-north-1
+
+       # Install EKSCTL
+       - name: installing eksctl
+         run: |
+             # for ARM systems, set ARCH to: `arm64`, `armv6` or `armv7`
+             ARCH=amd64
+             PLATFORM=$(uname -s)_$ARCH
+         
+             curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+         
+             # (Optional) Verify checksum
+             curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" | grep $PLATFORM | sha256sum --check
+         
+             tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
+         
+             sudo mv /tmp/eksctl /usr/local/bin
+ 
+       - name: creating cluster
+         run: |
+           eksctl create cluster --name simple \
+           --nodegroup-name simple \
+           --node-type t3.large \
+           --nodes 4 \
+           --nodes-max 4 \
+           --nodes-min 2 \
+           --managed
+           # aws eks --region your-aws-region create-cluster \
+           #   --name your-eks-cluster-name \
+           #   --kubernetes-version 1.21 \
+           #   --role-arn arn:aws:iam::381553522754:role/your-eks-cluster-role \
+           #   # Additional parameters as needed
+       
+       - name: setup OIDC
+         run: |
+           cluster_name=simple
+           oidc_id=$(aws eks describe-cluster --name $cluster_name --query "cluster.identity.oidc.issuer" --output text | cut -d '/' -f 5)
+           aws iam list-open-id-connect-providers | grep $oidc_id | cut -d "/" -f4
+           eksctl utils associate-iam-oidc-provider --cluster $cluster_name --approve
+ 
+       - name: create a service account
+         run: |
+           echo "Creating service account..."
+           cluster_name=simple
+           eksctl create iamserviceaccount \
+           --name ebs-csi-controller-sa \
+           --namespace kube-system \
+           --cluster $cluster_name \
+           --role-name AmazonEKS_EBS_CSI_DriverRole \
+           --role-only \
+           --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+           --approve
+ 
+       - name: add the EBS-CSI addon
+         run: |
+             cluster_name=simple
+             echo "Adding EBS-CSI addon..."
+             eksctl create addon --name aws-ebs-csi-driver --cluster $cluster_name --service-account-role-arn arn:aws:iam::381553522754:role/AmazonEKS_EBS_CSI_DriverRole --force
+
+       - name: Install kubectl
+         uses: azure/setup-kubectl@v3
+         with:
+            version: 'v1.24.0' # default is latest stable
+         id: install
 
        - name: "Logs into docker"
          uses: docker/login-action@v3
@@ -85,4 +98,21 @@ jobs:
          run: |
              docker build -t $USERNAME/$IMAGE_NAME:$VERSION .
              docker push $USERNAME/$IMAGE_NAME:$VERSION
+          
+       - name: Update kube-config
+         run: aws eks update-kubeconfig --name simple
+          
+       - name: Helm install
+         uses: Azure/k8s-deploy@v4
+         with:
+          images: 'epauldike/simplepersonal101:latest'
+          # imagepullsecrets: |
+          #    image-pull-secret1
+          #    image-pull-secret2
+          manifests: |
+             simple.yaml
+
+      #  - name: Deploy to EKS
+      #    run: |
+      #        kubectl apply -f simple.yaml
 
